@@ -1,7 +1,6 @@
 import os
 import io
 import re
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 import aiohttp
@@ -69,42 +68,6 @@ async def dm_file(interaction: discord.Interaction, filename: str, data: bytes, 
         return
     await interaction.followup.send("¡Listo! Te he enviado el archivo por mensaje privado (DM).", ephemeral=True)
 
-def extract_workspace_and_replicatedstorage(raw: bytes) -> tuple[bytes, int]:
-    """Filter top-level Workspace and ReplicatedStorage from an authorized RBXLX XML file."""
-    parser = ET.XMLParser()
-    root = ET.fromstring(raw, parser=parser)
-    if root.tag != "roblox":
-        raise ValueError("El XML no parece un archivo RBXLX de Roblox Studio.")
-
-    selected = []
-    for child in list(root):
-        if child.tag != "Item":
-            continue
-        class_name = child.attrib.get("class", "")
-        props = child.find("Properties")
-        name_node = props.find("string[@name='Name']") if props is not None else None
-        item_name = (name_node.text or "") if name_node is not None else ""
-        if (class_name == "Workspace" and item_name == "Workspace") or (
-            class_name == "ReplicatedStorage" and item_name == "ReplicatedStorage"
-        ):
-            selected.append(child)
-
-    found_names = set()
-    for item in selected:
-        props = item.find("Properties")
-        name_node = props.find("string[@name='Name']") if props is not None else None
-        if name_node is not None and name_node.text:
-            found_names.add(name_node.text)
-
-    if not selected:
-        raise ValueError("No encontré Workspace ni ReplicatedStorage en el nivel principal del RBXLX.")
-    # Do not keep other top-level game services in the exported file.
-    for child in list(root):
-        if child.tag == "Item" and child not in selected:
-            root.remove(child)
-    output = ET.tostring(root, encoding="utf-8", xml_declaration=True)
-    return output, len(selected)
-
 @bot.event
 async def on_ready():
     try:
@@ -123,13 +86,13 @@ async def on_ready():
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="Decompile Bot — Ayuda",
-        description="Consulta datos públicos y procesa archivos propios o autorizados.",
+        description="Consulta información pública de experiencias de Roblox mediante un enlace.",
         color=discord.Color.blurple(),
     )
     embed.add_field(name="/game universe_id", value="Consulta información pública de una experiencia.", inline=False)
     embed.add_field(name="/analyze archivo", value="Analiza un archivo .lua o .luau.", inline=False)
-    embed.add_field(name="/decompile archivo", value="Filtra Workspace y ReplicatedStorage de un archivo .rbxlx autorizado y te lo envía por DM.", inline=False)
-    embed.add_field(name="Importante", value="Un enlace de juego no permite descargar sus archivos privados. No subas cookies, contraseñas ni tokens.", inline=False)
+    embed.add_field(name="/decompile link", value="Consulta información pública de un juego usando su enlace de Roblox y te la envía por DM.", inline=False)
+    embed.add_field(name="Importante", value="El enlace permite consultar datos públicos; no descarga ni revela scripts privados del juego.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="game", description="Consulta información pública de una experiencia de Roblox.")
@@ -183,33 +146,76 @@ async def analyze_command(interaction: discord.Interaction, archivo: discord.Att
     except Exception as exc:
         await interaction.followup.send(f"No se pudo analizar el archivo ({exc.__class__.__name__}).", ephemeral=True)
 
-@bot.tree.command(name="decompile", description="Filtra Workspace y ReplicatedStorage de un RBXLX autorizado y lo envía por DM.")
-@app_commands.describe(
-    archivo="Archivo .rbxlx (XML) propio o autorizado. Un enlace de juego por sí solo no sirve."
-)
-async def decompile_command(interaction: discord.Interaction, archivo: discord.Attachment):
-    if not archivo.filename.lower().endswith(".rbxlx"):
+@bot.tree.command(name="decompile", description="Consulta información pública de un juego de Roblox por su enlace.")
+@app_commands.describe(link="Enlace público del juego, por ejemplo https://www.roblox.com/games/123456789/Nombre")
+async def decompile_command(interaction: discord.Interaction, link: str):
+    match = re.search(r"(?:https?://)?(?:www\.)?roblox\.com/games/(\d+)", link.strip(), flags=re.IGNORECASE)
+    if not match:
         await interaction.response.send_message(
-            "Adjunta un archivo .rbxlx exportado desde Roblox Studio. Un enlace de Roblox no permite obtener automáticamente el archivo del juego. "
-            "Esta versión no convierte archivos binarios .rbxl.",
+            "No reconozco ese enlace. Pega un enlace de juego como https://www.roblox.com/games/123456789/Nombre-del-juego",
             ephemeral=True,
         )
         return
+
+    place_id = match.group(1)
     await interaction.response.defer(ephemeral=True, thinking=True)
+    timeout = aiohttp.ClientTimeout(total=20)
     try:
-        raw = await read_attachment(archivo)
-        filtered, count = extract_workspace_and_replicatedstorage(raw)
-        await dm_file(
-            interaction,
-            "workspace_replicatedstorage.rbxlx",
-            filtered,
-            f"Archivo filtrado listo. Se conservaron {count} servicios principales: Workspace y/o ReplicatedStorage. "
-            "Ábrelo en Roblox Studio. Solo se procesó el archivo que adjuntaste.",
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Resolve the public place ID to its universe ID.
+            async with session.get(f"https://apis.roblox.com/universes/v1/places/{place_id}/universe") as response:
+                if response.status != 200:
+                    await interaction.followup.send(
+                        f"Roblox no pudo resolver ese juego (HTTP {response.status}). Comprueba el enlace e inténtalo de nuevo.",
+                        ephemeral=True,
+                    )
+                    return
+                universe_payload = await response.json()
+            universe_id = universe_payload.get("universeId")
+            if not universe_id:
+                await interaction.followup.send("No encontré información pública para ese enlace.", ephemeral=True)
+                return
+
+            async with session.get(
+                "https://games.roblox.com/v1/games", params={"universeIds": str(universe_id)}
+            ) as response:
+                if response.status != 200:
+                    await interaction.followup.send(
+                        f"Roblox no pudo devolver los datos del juego (HTTP {response.status}).",
+                        ephemeral=True,
+                    )
+                    return
+                payload = await response.json()
+
+        games = payload.get("data", [])
+        if not games:
+            await interaction.followup.send("No se encontró información pública para ese juego.", ephemeral=True)
+            return
+
+        game = games[0]
+        embed = discord.Embed(
+            title=str(game.get("name", "Experiencia de Roblox"))[:256],
+            url=f"https://www.roblox.com/games/{game.get('rootPlaceId', place_id)}",
+            description=(game.get("description") or "Sin descripción pública.")[:4000],
+            color=discord.Color.blurple(),
         )
-    except (ValueError, ET.ParseError) as exc:
-        await interaction.followup.send(f"No se pudo procesar el RBXLX: {exc}", ephemeral=True)
-    except Exception as exc:
-        await interaction.followup.send(f"No se pudo procesar el archivo ({exc.__class__.__name__}).", ephemeral=True)
+        embed.add_field(name="Creador", value=str((game.get("creator") or {}).get("name", "No disponible"))[:1024], inline=True)
+        embed.add_field(name="Universe ID", value=str(game.get("id", universe_id)), inline=True)
+        embed.add_field(name="Place ID", value=str(game.get("rootPlaceId", place_id)), inline=True)
+        embed.add_field(name="Jugadores activos", value=str(game.get("playing", "No disponible")), inline=True)
+        embed.add_field(name="Visitas", value=str(game.get("visits", "No disponible")), inline=True)
+        embed.set_footer(text="Solo información pública; no se descargan archivos ni scripts del juego.")
+
+        try:
+            await interaction.user.send(embed=embed)
+            await interaction.followup.send("¡Listo! Te he enviado la información pública del juego por mensaje privado (DM).", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "No puedo enviarte un DM. Activa los mensajes directos de miembros del servidor e inténtalo otra vez.",
+                ephemeral=True,
+            )
+    except (aiohttp.ClientError, TimeoutError):
+        await interaction.followup.send("No se pudo consultar Roblox en este momento. Inténtalo de nuevo más tarde.", ephemeral=True)
 
 if not DISCORD_TOKEN:
     raise RuntimeError("Falta la variable de entorno DISCORD_TOKEN. Configúrala en el hosting.")

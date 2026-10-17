@@ -4,12 +4,10 @@ Bot de Discord en Python. Incluye:
 - `/help`
 - `/game universe_id`: metadatos públicos de Roblox.
 - `/analyze archivo`: informe estático básico de `.lua` / `.luau`, enviado por DM.
-- `/decompile archivo`: recibe un `.rbxlx` autorizado, conserva únicamente los servicios principales `Workspace` y `ReplicatedStorage`, y envía el archivo filtrado por DM.
+- `/decompile link`: recibe un enlace público de Roblox y envía por DM la información pública del juego.
 
-## Importante sobre los formatos
-Esta versión genera `workspace_replicatedstorage.rbxlx`, no un `.rbxl` binario. RBXLX es el formato XML de Roblox Studio. No renombres el archivo a `.rbxl`, porque eso no lo convierte a formato binario.
-
-No se puede recuperar el archivo completo de un juego privado usando solo el enlace público. El comando `/decompile` necesita que adjuntes un `.rbxlx` que tengas permiso para procesar. No utiliza cookies `.ROBLOSECURITY` ni extrae código privado de experiencias ajenas.
+## Importante
+El comando `/decompile` solo acepta un enlace público de un juego de Roblox y consulta datos públicos como el nombre, descripción, creador, visitas y jugadores activos. No descarga archivos, no extrae scripts ni revela el código privado del juego. No utiliza cookies `.ROBLOSECURITY`.
 
 ## Discord Developer Portal
 1. Ve a https://discord.com/developers/applications y crea una aplicación.
@@ -38,8 +36,8 @@ Un plan gratuito puede suspender procesos o no permitir workers persistentes. Ve
 8. `python bot.py`
 
 ## Uso
-- `/decompile archivo:mi_juego.rbxlx` → devuelve por DM un `.rbxlx` con `Workspace` y `ReplicatedStorage`.
+- `/decompile link:https://www.roblox.com/games/123456789/Nombre` → consulta información pública y la envía por DM.
 - `/analyze archivo:script.luau` → devuelve por DM un informe.
 - `/game universe_id:123456789` → consulta metadatos públicos.
 
-El bot procesa los adjuntos en memoria y no los guarda deliberadamente en disco. El usuario debe tener permiso para subir y procesar el archivo.
+El comando `/analyze` sigue aceptando scripts `.lua`/`.luau` como adjuntos para realizar un análisis estático básico.
