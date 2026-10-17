@@ -92,7 +92,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="/game universe_id", value="Consulta información pública de una experiencia.", inline=False)
     embed.add_field(name="/analyze archivo", value="Analiza un archivo .lua o .luau.", inline=False)
     embed.add_field(name="/decompile link", value="Consulta información pública de un juego usando su enlace de Roblox y te la envía por DM.", inline=False)
-    embed.add_field(name="Importante", value="El enlace permite consultar datos públicos; no descarga ni revela scripts privados del juego.", inline=False)
+    embed.add_field(name="Importante", value="Un enlace público no permite descargar el archivo .rbxl completo ni revelar scripts privados. Para procesar un proyecto, adjunta un archivo que tengas permiso para usar.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="game", description="Consulta información pública de una experiencia de Roblox.")
@@ -146,7 +146,7 @@ async def analyze_command(interaction: discord.Interaction, archivo: discord.Att
     except Exception as exc:
         await interaction.followup.send(f"No se pudo analizar el archivo ({exc.__class__.__name__}).", ephemeral=True)
 
-@bot.tree.command(name="decompile", description="Consulta información pública de un juego de Roblox por su enlace.")
+@bot.tree.command(name="decompile", description="Consulta información pública de Roblox por enlace; no descarga el .rbxl.")
 @app_commands.describe(link="Enlace público del juego, por ejemplo https://www.roblox.com/games/123456789/Nombre")
 async def decompile_command(interaction: discord.Interaction, link: str):
     match = re.search(r"(?:https?://)?(?:www\.)?roblox\.com/games/(\d+)", link.strip(), flags=re.IGNORECASE)
@@ -208,7 +208,7 @@ async def decompile_command(interaction: discord.Interaction, link: str):
 
         try:
             await interaction.user.send(embed=embed)
-            await interaction.followup.send("¡Listo! Te he enviado la información pública del juego por mensaje privado (DM).", ephemeral=True)
+            await interaction.followup.send("He consultado los datos públicos y te los he enviado por DM. Importante: Roblox no proporciona el archivo .rbxl completo a partir de un enlace público.", ephemeral=True)
         except discord.Forbidden:
             await interaction.followup.send(
                 "No puedo enviarte un DM. Activa los mensajes directos de miembros del servidor e inténtalo otra vez.",
